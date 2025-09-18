@@ -115,7 +115,7 @@ def ajob(func, submit=False, **kwargs):
     dojob(submit, shscript, pyscript, func, sysdir, J=f'{jobname}', **kwargs)
 
 
-def workflow(func, submit, **kwargs):
+def workflow(submit, **kwargs):
     kwargs.setdefault('t', '00-04:00:00')
     kwargs.setdefault('N', '1')
     kwargs.setdefault('n', '1')
@@ -125,8 +125,8 @@ def workflow(func, submit, **kwargs):
     kwargs.setdefault('o', 'slurm_jobs/output.%A.out')
     for sysname in sysnames:
         for runname in runs:
-            dojob(submit, shscript, pyscript, func, sysdir, sysname, runname,
-                  J=f'{func}', **kwargs)
+            dojob(submit, shscript, pyscript, 'workflow', sysdir, sysname, runname,
+                  J='workflow', **kwargs)
 
 
 if __name__ == "__main__":
@@ -143,12 +143,12 @@ if __name__ == "__main__":
 
     # ajob('workflow', 'initiate_systems_from_emu', submit=False)
     # setup(submit=True, md_module=md_module, mem='2G', q='public', p='htc', t='00:10:00',)
-    # workflow(md_module, 'workflow', True, q='public', p='htc', t='00-00:20:00', c='1', mem='12G')
-    # workflow(md_module, 'workflow', True, q='public', p='htc', t='00-00:20:00', c='1', mem='12G', G='1')
+    # workflow(True, q='public', p='htc', t='00-00:20:00', c='1', mem='12G')
+    # workflow(True, q='public', p='htc', t='00-00:20:00', c='1', mem='12G', G='1')
     # md(submit=False, md_module=md_module, ntomp=4, mem='2G', q='public', p='htc', t='00-01:00:00', G=1)
     # md(submit=True, md_module=md_module, ntomp=4, mem='4G', q='public', p='htc', t='00-00:15:00', G=1)
     # extend(submit=True, md_module=md_module, ntomp=8, mem='2G', q='public', p='htc', t='00-04:00:00', G=1)
     # extend(submit=True, md_module=md_module, ntomp=8, mem='2G', q='grp_sozkan', p='general', t='01-00:00:00', G=1)
     # trjconv(submit=True, md_module=md_module, t='00-00:20:00', q='public', p='htc', c='1', mem='2G')
     # tdlrt_analysis(submit=True, mem='7G', t='00-00:20:00',)
-    get_averages(pattern='ccf_pv*.npy', submit=True, mem='8G') 
+    # get_averages(pattern='ccf_pv*.npy', submit=True, mem='8G') 
