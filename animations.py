@@ -200,6 +200,6 @@ if __name__ == '__main__':
     datdir = 'data'
     sysnames =['1btl_nve']
     for sysname in sysnames:
-        alist = ['vv', ]
+        alist = ['pv', ]
         for key in alist:
             make_hm_animation(sysname, key)

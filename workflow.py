@@ -9,8 +9,7 @@ import numpy as np
 import MDAnalysis as mda
 from MDAnalysis.transformations.fit import fit_rot_trans
 import openmm as mm
-from openmm import app, Platform
-from openmm.unit import *
+from openmm import app, Platform, unit
 from reforge.mdsystem.mdsystem import MDSystem, MDRun
 from reforge.mdsystem.mmmd import MmSystem, MmRun, MmReporter
 from reforge.utils import clean_dir, logger
@@ -21,12 +20,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Global settings
 INPDB = '1btl.pdb'
 # Production parameters
-TEMPERATURE = 300*kelvin
-PRESSURE = 1*bar
-TOTAL_TIME = 200*picoseconds
-TSTEP = 2*femtoseconds
-GAMMA = 1/picosecond  # 5 for CG, 1 for AA
-NOUT = 10
+TEMPERATURE = 300 * unit.kelvin  # for equilibraion
+GAMMA = 1 / unit.picosecond
+PRESSURE = 1 * unit.bar
+TOTAL_TIME = 200 * unit.picoseconds
+TSTEP = 2 * unit.femtoseconds
+NOUT = 10 # save every NOUT steps
 OUT_SELECTION = "name CA" 
 SELECTION = "name CA" 
 
@@ -76,8 +75,8 @@ def setup(sysdir, sysname):
     model.addSolvent(forcefield, 
         model='tip3p', 
         boxShape='dodecahedron', #  ‘cube’, ‘dodecahedron’, and ‘octahedron’
-        padding=1.0*nanometer,
-        ionicStrength=0.1*molar,
+        padding=1.0 * unit.nanometer,
+        ionicStrength=0.1 * unit.molar,
         positiveIon='Na+',
         negativeIon='Cl-')
     with open(mdsys.syspdb, "w", encoding="utf-8") as file:
@@ -98,7 +97,7 @@ def md_nve(sysdir, sysname, runname):
     system = ff.createSystem(
         pdb.topology,
         nonbondedMethod=app.PME,
-        nonbondedCutoff=1.0*nanometer,
+    nonbondedCutoff=1.0 * unit.nanometer,
         constraints=app.HBonds,
         removeCMMotion=False,     # important for strict NVE
         ewaldErrorTolerance=1e-5
@@ -395,3 +394,28 @@ def _pdb_to_seq(pdb):
     return seq_oneletter
 
 
+def _get_module_functions(module):
+    """Get all non-private functions from a module"""
+    return {name: obj for name, obj in inspect.getmembers(module, inspect.isfunction)
+            if not name.startswith('_')}
+
+
+def _main():
+    if len(sys.argv) < 2:
+        print("Usage: <script> <command> [args...]")
+        sys.exit(1)
+    command = sys.argv[1]
+    args = sys.argv[2:]
+    module = sys.modules[__name__] # current module
+    functions = _get_module_functions(module)
+    if command not in functions:
+        raise ValueError(f"Unknown command: {command}. Available commands for {module_name}: {', '.join(functions.keys())}")
+    try:
+        functions[command](*args)
+    except Exception as e:
+        print(f"Error executing {module_name}.{command}: {str(e)}")
+        raise
+
+
+if __name__ == "__main__":
+    _main()
