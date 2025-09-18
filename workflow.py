@@ -213,7 +213,7 @@ def get_averages(sysdir, *args):
                     count += 1
                 average = average[s] 
                 average /= count
-            outdir = Path(sysdir) / "data" 
+            outdir = str(Path(sysdir)).replace('systems', 'data')
             outdir.mkdir(exist_ok=True, parents=True)   
             out_file = outdir / f"{pattern.split('*')[0]}_av.npy"     
             np.save(out_file, average)

@@ -80,7 +80,7 @@ def get_averages(submit=False, **kwargs):
     """Calculate average values for each system."""
     kwargs.setdefault('mem', '80G')
     for sysname in sysnames:
-        dojob(submit, shscript, pyscript, 'analysis', 'get_averages', sysdir, sysname, 
+        dojob(submit, shscript, pyscript, 'workflow', 'get_averages', sysdir, sysname, 
               J=f'av_{sysname}', **kwargs)
 
 
@@ -145,11 +145,11 @@ if __name__ == "__main__":
 
     # ajob('workflow', 'initiate_systems_from_emu', submit=False)
     # setup(submit=True, md_module=md_module, mem='2G', q='public', p='htc', t='00:10:00',)
-    workflow(md_module, 'workflow', True, q='public', p='htc', t='00-00:20:00', G='1', c='1', mem='12G')
+    # workflow(md_module, 'workflow', True, q='public', p='htc', t='00-00:20:00', G='1', c='1', mem='12G')
     # md(submit=False, md_module=md_module, ntomp=4, mem='2G', q='public', p='htc', t='00-01:00:00', G=1)
     # md(submit=True, md_module=md_module, ntomp=4, mem='4G', q='public', p='htc', t='00-00:15:00', G=1)
     # extend(submit=True, md_module=md_module, ntomp=8, mem='2G', q='public', p='htc', t='00-04:00:00', G=1)
     # extend(submit=True, md_module=md_module, ntomp=8, mem='2G', q='grp_sozkan', p='general', t='01-00:00:00', G=1)
     # trjconv(submit=True, md_module=md_module, t='00-00:20:00', q='public', p='htc', c='1', mem='2G')
     # tdlrt_analysis(submit=True, mem='7G', t='00-00:20:00',)
-    # get_averages(submit=False, mem='4G') 
+    get_averages(submit=False, mem='4G') 
