@@ -181,10 +181,10 @@ def animate_hm(fig, img, data, title, dt=0.02, outfile="data/hm_ani.mp4"):
 
 
 def make_hm_animation(sysname, key):
-    infile = Path(sysdir) / "data" / f"ccf_{key}_av.npy"
+    infile = Path("data") / sysname / f"ccf_{key}_av.npy"
     ccf = np.load(infile)
     fname = os.path.basename(infile).replace('.npy', '')
-    data = ccf - ccf[:, :, 400][..., None]
+    data = ccf # - ccf[:, :, -1][..., None]
     pertmat = mdm.td_perturbation_matrix(data)
     data = pertmat # - pertmat[:, :, 400][..., None]
     # data = sliding_window_average(data, window_size=10)
@@ -193,14 +193,13 @@ def make_hm_animation(sysname, key):
     fig.savefig(f"png/{fname}.png")
     title = f'{key.upper()} CCF'
     outfile = f"png/{sysname}_{fname}.mp4"
-    animate_hm(fig, img, data[:, :, :400], title, dt=20, outfile=outfile)
+    animate_hm(fig, img, data[:, :, :-1], title, dt=20, outfile=outfile)
   
 
 if __name__ == '__main__':
-    sysdir = 'systems/blac_nve' 
-    sysnames =['blac_nve']
+    datdir = 'data'
+    sysnames =['1btl_nve']
     for sysname in sysnames:
-        mdsys = MDSystem(sysdir, sysname)
-        alist = ['pv', ]
+        alist = ['vv', ]
         for key in alist:
             make_hm_animation(sysname, key)

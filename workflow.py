@@ -10,7 +10,7 @@ import MDAnalysis as mda
 from MDAnalysis.transformations.fit import fit_rot_trans
 import openmm as mm
 from openmm import app, Platform
-from openmm.unit import angstrom, nanometer, molar, kilojoules_per_mole, kelvin, bar, nanoseconds, femtoseconds, picosecond
+from openmm.unit import *
 from reforge.mdsystem.mdsystem import MDSystem, MDRun
 from reforge.mdsystem.mmmd import MmSystem, MmRun, MmReporter
 from reforge.utils import clean_dir, logger
@@ -23,7 +23,7 @@ INPDB = '1btl.pdb'
 # Production parameters
 TEMPERATURE = 300*kelvin
 PRESSURE = 1*bar
-TOTAL_TIME = 1000*nanoseconds 
+TOTAL_TIME = 200*picoseconds
 TSTEP = 2*femtoseconds
 GAMMA = 1/picosecond  # 5 for CG, 1 for AA
 NOUT = 10
@@ -32,8 +32,9 @@ SELECTION = "name CA"
 
 
 def workflow(sysdir, sysname, runname):
-    md_nve(sysdir, sysname, runname)
-    trjconv(sysdir, sysname, runname)
+    # md_nve(sysdir, sysname, runname)
+    # trjconv(sysdir, sysname, runname)
+    # save_pos_vel_to_numpy(sysdir, sysname, runname, selection=SELECTION, dtype=np.float32)
     tdlrt_analysis(sysdir, sysname, runname)
 
 
@@ -172,16 +173,24 @@ def trjconv(sysdir, sysname, runname):
         conv_traj = traj
         shutil.copy(top, conv_top)
     out_traj = str(mdrun.rundir / f"samples.trr")
-    _trjconv_transform(conv_traj, conv_top, out_traj, transform_vels=True)
+    _trjconv_fit(conv_traj, conv_top, out_traj, transform_vels=True)
 
 
 def tdlrt_analysis(sysdir, sysname, runname):
     mdrun = MDRun(sysdir, sysname, runname)
-    traj = str(mdrun.rundir / f"samples.trr")
-    top = str(mdrun.rundir / "topology.pdb")
-    u = mda.Universe(top, traj)
-    vs = io.read_velocities(u, u.atoms) # (n_atoms*3, nframes)
-    ps = io.read_positions(u, u.atoms) # (n_atoms*3, nframes)
+    ps_path = str(mdrun.rundir / f"positions.npy")
+    vs_path = str(mdrun.rundir / f"velocities.npy")
+    if (Path(ps_path).exists() and Path(vs_path).exists()):
+        logger.info("Loading positions and velocities from %s", mdrun.rundir)
+        ps = np.load(ps_path)
+        vs = np.load(vs_path)
+    else:
+        traj = str(mdrun.rundir / f"samples.trr")
+        top = str(mdrun.rundir / "topology.pdb")
+        u = mda.Universe(top, traj)
+        ps = io.read_positions(u, u.atoms) # (n_atoms*3, nframes)
+        vs = io.read_velocities(u, u.atoms) # (n_atoms*3, nframes)
+    # CCF calculations
     adict = {'pv': (ps, vs), 'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
     for key, item in adict.items(): # DT = TSTEP * NOUT
         v1, v2 = item
@@ -191,36 +200,79 @@ def tdlrt_analysis(sysdir, sysname, runname):
         logger.info("Saved CCFs to %s", corr_file)
 
 
-def get_averages(sysdir, *args):
+def get_averages(sysdir, pattern, *args):
     def slicer(shape): # Slice object to crop arrays to min_shape
         return tuple(slice(0, s) for s in shape)
-    patterns = ["ccf_pv*.npy", "ccf_vv*.npy"]    
-    # patterns = ["ccf_vv*.npy"]    
-    for pattern in patterns:
-        files = io.pull_files(sysdir, pattern)
-        if files:
-            logger.info("Processing %s", files[0])
-            average = np.load(files[0])
-            min_shape = average.shape
-            count = 1
-            if len(files) > 1:
-                for f in files[1:]:
-                    logger.info("Processing %s", f)
-                    arr = np.load(f)
-                    min_shape = tuple(min(s1, s2) for s1, s2 in zip(min_shape, arr.shape))
-                    s = slicer(min_shape)
-                    average[s] += arr[s]  # ← in-place addition
-                    count += 1
-                average = average[s] 
-                average /= count
-            outdir = str(Path(sysdir)).replace('systems', 'data')
-            outdir.mkdir(exist_ok=True, parents=True)   
-            out_file = outdir / f"{pattern.split('*')[0]}_av.npy"     
-            np.save(out_file, average)
-            logger.info("Done!")
-        else:
-            logger.info('Could not find files matching given pattern: %s. Maybe you forgot "*"?', pattern)
+    files = io.pull_files(sysdir, pattern)
+    if files:
+        logger.info("Processing %s", files[0])
+        average = np.load(files[0])
+        min_shape = average.shape
+        count = 1
+        if len(files) > 1:
+            for f in files[1:]:
+                logger.info("Processing %s", f)
+                arr = np.load(f)
+                min_shape = tuple(min(s1, s2) for s1, s2 in zip(min_shape, arr.shape))
+                s = slicer(min_shape)
+                average[s] += arr[s]  # ← in-place addition
+                count += 1
+            average = average[s] 
+            average /= count
+        outdir = Path('data') / Path(sysdir).relative_to('systems')
+        outdir.mkdir(exist_ok=True, parents=True)   
+        out_file = outdir / f"{pattern.split('*')[0]}_av.npy"     
+        np.save(out_file, average)
+        logger.info("Saved averages to %s", out_file)
+    else:
+        logger.info('Could not find files matching given pattern: %s. Maybe you forgot "*"?', pattern)
 
+
+def save_pos_vel_to_numpy(sysdir, sysname, runname, selection=SELECTION, dtype=np.float32):
+    mdrun = MDRun(sysdir, sysname, runname)
+    traj = mdrun.rundir / "samples.trr"
+    top = mdrun.rundir / "topology.pdb" 
+    outdir = Path(mdrun.rundir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    logger.info("Reading trajectory %s with topology %s", traj, top)
+    u = mda.Universe(str(top), str(traj))
+    ag = u.select_atoms(selection)
+    n_atoms = ag.n_atoms
+    if n_atoms == 0:
+        logger.warning("Selection '%s' matched no atoms; nothing to save", selection)
+        return
+    positions = []
+    velocities = []
+    for ts in u.trajectory:
+        # copy to avoid referencing the underlying arrays
+        positions.append(ag.positions.copy())
+        vel = getattr(ag, 'velocities', None)
+        if vel is None:
+            # try frame attribute
+            vel = getattr(ts, 'velocities', None)
+        if vel is None:
+            # fill with zeros if velocities are not present
+            velocities.append(np.zeros_like(ag.positions, dtype=dtype))
+        else:
+            velocities.append(vel.copy())
+    # Stack into arrays: shape (n_atoms, 3, n_frames)
+    pos_arr = np.stack(positions, axis=2).astype(dtype)
+    vel_arr = np.stack(velocities, axis=2).astype(dtype)
+    n_frames = pos_arr.shape[2]
+    # Reshape to (n_atoms*3, n_frames) ordering: atom0_x, atom0_y, atom0_z, atom1_x, ...
+    pos_flat = pos_arr.reshape(n_atoms * 3, n_frames)
+    vel_flat = vel_arr.reshape(n_atoms * 3, n_frames)
+    pos_file = outdir / 'positions.npy'
+    vel_file = outdir / 'velocities.npy'
+    np.save(pos_file, pos_flat)
+    np.save(vel_file, vel_flat)
+    logger.info('Saved positions (%s) and velocities (%s) for %d atoms and %d frames', pos_file, vel_file, n_atoms, n_frames)
+
+
+##############################################################################################
+##############################################################################################
+##############################################################################################
+##############################################################################################
 
 def _add_bb_restraints(system, pdb, bb_aname='CA'):
     restraint = mm.CustomExternalForce('bb_fc*periodicdistance(x, y, z, x0, y0, z0)^2')
@@ -246,7 +298,7 @@ def _trjconv_selection(input_traj, input_top, output_traj, output_top, selection
     logger.info("Saved selection '%s' to %s and topology to %s", selection, output_traj, output_top)
 
 
-def _trjconv_transform(input_traj, input_top, output_traj, transform_vels=False):
+def _trjconv_fit(input_traj, input_top, output_traj, transform_vels=False):
     u = mda.Universe(input_top, input_traj)
     ag = u.atoms
     ref_u = mda.Universe(input_top) 
