@@ -144,11 +144,11 @@ if __name__ == "__main__":
     # ajob('workflow', 'initiate_systems_from_emu', submit=False)
     # setup(submit=True, md_module=md_module, mem='2G', q='public', p='htc', t='00:10:00',)
     # workflow(True, q='public', p='htc', t='00-00:20:00', c='1', mem='12G')
-    # workflow(True, q='public', p='htc', t='00-00:10:00', c='1', mem='12G', G='1')
+    # workflow(True, q='public', p='htc', t='00-00:10:00', c='1', mem='24G', G='1')
     # md(submit=False, md_module=md_module, ntomp=4, mem='2G', q='public', p='htc', t='00-01:00:00', G=1)
     # md(submit=True, md_module=md_module, ntomp=4, mem='4G', q='public', p='htc', t='00-00:15:00', G=1)
     # extend(submit=True, md_module=md_module, ntomp=8, mem='2G', q='public', p='htc', t='00-04:00:00', G=1)
     # extend(submit=True, md_module=md_module, ntomp=8, mem='2G', q='grp_sozkan', p='general', t='01-00:00:00', G=1)
     # trjconv(submit=True, md_module=md_module, t='00-00:20:00', q='public', p='htc', c='1', mem='2G')
     # tdlrt_analysis(submit=True, mem='7G', t='00-00:20:00',)
-    get_averages(pattern='ccf_pv*.npy', submit=True, mem='4G') 
+    get_averages(pattern='ccf_pv*.npy', submit=True, c='8', mem='36G')  # mem = c * 2 * arr_size_in_GB

@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 import warnings
 import numpy as np
+import multiprocessing as mp
 import MDAnalysis as mda
 from MDAnalysis.transformations.fit import fit_rot_trans
 import openmm as mm
@@ -189,43 +190,81 @@ def tdlrt_analysis(sysdir, sysname, runname):
         u = mda.Universe(top, traj)
         ps = io.read_positions(u, u.atoms) # (n_atoms*3, nframes)
         vs = io.read_velocities(u, u.atoms) # (n_atoms*3, nframes)
-    ps = ps - ps[:, 0] [..., None]
+    ps = ps - ps[:, 0][..., None]
+    # ps -= ps.mean(axis=1)[..., None]
     # CCF calculations
-    adict = {'pv': (ps, vs),} #  'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
+    adict = {'pv': (ps, vs), 'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
     for key, item in adict.items(): # DT = TSTEP * NOUT
         v1, v2 = item
-        corr = mdm.ccf(v1, v2, ntmax=200, n=1, mode='gpu', center=False, dtype=np.float32) # falls back on cpu if no cuda
-        corr_file = mdrun.lrtdir / f'ccf_{key}.npy'
+        corr = mdm.ccf(v1, v2, ntmax=2000, n=1, mode='gpu', center=False, dtype=np.float32) # falls back on cpu if no cuda
+        corr_file = mdrun.lrtdir / f'ccf_1_{key}.npy'
         np.save(corr_file, corr)    
         logger.info("Saved CCFs to %s", corr_file)
 
 
-def get_averages(sysdir, pattern, *args):
-    def slicer(shape): # Slice object to crop arrays to min_shape
-        return tuple(slice(0, s) for s in shape)
+def get_averages(sysdir, pattern, dtype=None, *args):
+    """Calculate average arrays across files matching pattern."""
+    nprocs = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
+    logger.info("Number of available processors: %s", nprocs)
     files = io.pull_files(sysdir, pattern)[::]
-    if files:
-        logger.info("Processing %s", files[0])
-        average = np.load(files[0])
-        min_shape = average.shape
-        count = 1
-        if len(files) > 1:
-            for f in files[1:]:
-                logger.info("Processing %s", f)
-                arr = np.load(f)
-                min_shape = tuple(min(s1, s2) for s1, s2 in zip(min_shape, arr.shape))
-                s = slicer(min_shape)
-                average[s] += arr[s]  # ← in-place addition
-                count += 1
-            average = average[s] 
-            average /= count
-        outdir = Path('data') / Path(sysdir).relative_to('systems')
-        outdir.mkdir(exist_ok=True, parents=True)   
-        out_file = outdir / f"{pattern.split('*')[0]}_av.npy"     
-        np.save(out_file, average)
-        logger.info("Saved averages to %s", out_file)
-    else:
+    if not files:
         logger.info('Could not find files matching given pattern: %s. Maybe you forgot "*"?', pattern)
+        return
+    logger.info("Found %d files, starting processing: %s", len(files), files[0])
+    # Discover minimal common shape (fast, uses mmap to avoid loading full arrays)
+    shapes = []
+    for f in files:
+        try:
+            arr = np.load(f, mmap_mode='r')
+            if dtype is None:
+                dtype = arr.dtype
+            shapes.append(arr.shape)
+        except Exception as e:
+            logger.warning("Could not read shape for %s: %s", f, e)
+    if not shapes:
+        logger.info('No readable files found for pattern: %s', pattern)
+        return
+    min_shape = tuple(min(s[i] for s in shapes) for i in range(len(shapes[0])))
+    logger.info('Running parallel get_averages with %d processes', nprocs)
+    # split files into roughly equal batches
+    batches = [files[i::nprocs] for i in range(nprocs)]
+    work = [(batch, min_shape) for batch in batches if batch]
+    with mp.Pool(processes=len(work)) as pool:
+        results = pool.map(_process_batch, work)
+    total_sum = np.zeros(min_shape, dtype=dtype)
+    total_count = 0
+    for local_sum, local_count in results:
+        total_sum += local_sum
+        total_count += local_count
+    average = total_sum / total_count
+    outdir = Path('data') / Path(sysdir).relative_to('systems')
+    outdir.mkdir(exist_ok=True, parents=True)
+    out_file = outdir / f"{pattern.split('*')[0]}_av.npy"
+    np.save(out_file, average)
+    logger.info("Saved averages to %s", out_file)
+
+
+def _slicer(shape):
+    return tuple(slice(0, s) for s in shape)
+
+
+def _process_batch(args, dtype=np.float32):
+    """Worker: load assigned files, crop to min_shape and return local sum and count."""
+    files, min_shape = args
+    s = _slicer(min_shape)
+    local_sum = np.zeros(min_shape, dtype=dtype)
+    local_count = 0
+    for f in files:
+        logger.info("Processing %s", f)
+        try:
+            arr = np.load(f)
+        except Exception as e:
+            logger.warning("Could not load %s: %s", f, e)
+            continue
+        local_sum += arr[s]
+        local_count += 1
+        del arr
+    return local_sum, local_count
 
 
 def save_pos_vel_to_numpy(sysdir, sysname, runname, selection=SELECTION, dtype=np.float32):
