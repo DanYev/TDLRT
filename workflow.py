@@ -189,11 +189,12 @@ def tdlrt_analysis(sysdir, sysname, runname):
         u = mda.Universe(top, traj)
         ps = io.read_positions(u, u.atoms) # (n_atoms*3, nframes)
         vs = io.read_velocities(u, u.atoms) # (n_atoms*3, nframes)
+    ps = ps - ps[:, 0] [..., None]
     # CCF calculations
-    adict = {'pv': (ps, vs), 'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
+    adict = {'pv': (ps, vs),} #  'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
     for key, item in adict.items(): # DT = TSTEP * NOUT
         v1, v2 = item
-        corr = mdm.ccf(v1, v2, ntmax=400, n=1, mode='gpu', center=False, dtype=np.float32) # falls back on cpu if no cuda
+        corr = mdm.ccf(v1, v2, ntmax=200, n=1, mode='gpu', center=False, dtype=np.float32) # falls back on cpu if no cuda
         corr_file = mdrun.lrtdir / f'ccf_{key}.npy'
         np.save(corr_file, corr)    
         logger.info("Saved CCFs to %s", corr_file)
@@ -202,7 +203,7 @@ def tdlrt_analysis(sysdir, sysname, runname):
 def get_averages(sysdir, pattern, *args):
     def slicer(shape): # Slice object to crop arrays to min_shape
         return tuple(slice(0, s) for s in shape)
-    files = io.pull_files(sysdir, pattern)
+    files = io.pull_files(sysdir, pattern)[::]
     if files:
         logger.info("Processing %s", files[0])
         average = np.load(files[0])
