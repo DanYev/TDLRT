@@ -185,8 +185,8 @@ def make_hm_animation(sysname, key):
     ccf = np.load(infile)
     fname = os.path.basename(infile).replace('.npy', '')
     data = ccf # - ccf[:, :, -1][..., None]
-    pertmat = mdm.td_perturbation_matrix(data)
-    data = pertmat # - pertmat[:, :, 400][..., None]
+    # pertmat = mdm.td_perturbation_matrix(data)
+    # data = pertmat # - pertmat[:, :, 400][..., None]
     # data = sliding_window_average(data, window_size=10)
     # outfile = mdsys.pngdir / 'pp_corr.mp4'
     fig, img = plot_hm(data[:, :, 1], cmap='bwr')
@@ -200,6 +200,6 @@ if __name__ == '__main__':
     datdir = 'data'
     sysnames =['1btl_nve']
     for sysname in sysnames:
-        alist = ['pv', ]
+        alist = ['pv', 'vv']
         for key in alist:
             make_hm_animation(sysname, key)
