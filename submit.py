@@ -112,7 +112,7 @@ def run_job(func, submit=False, **kwargs):
 
 def ajob(func, submit=False, **kwargs):
     kwargs.setdefault('t', '00-01:00:00')
-    dojob(submit, shscript, pyscript, func, sysdir, J=f'{jobname}', **kwargs)
+    dojob(submit, shscript, pyscript, func, sysdir, J=f'{func}', **kwargs)
 
 
 def workflow(submit, **kwargs):
@@ -134,21 +134,22 @@ if __name__ == "__main__":
     pyscript = 'workflow.py'
 
 
-    sysdir = 'systems/1btl_nve'
+    sysdir = 'systems/1btl_nve_nikhil'
     sysnames = [p.name for p in sorted(Path(sysdir).iterdir())]
     # sysnames = [p.name for p in sorted(Path(sysdir).iterdir()) if p.is_dir() and not (p / 'mdruns' / 'mdrun' / 'md.trr').exists()]
     # sysnames = ['sample_000']
     runs = ['mdrun']
 
 
-    # ajob('workflow', 'initiate_systems_from_emu', submit=False)
+    # ajob('initiate_systems_from_emu', submit=False)
     # setup(submit=True, md_module=md_module, mem='2G', q='public', p='htc', t='00:10:00',)
     # workflow(True, q='public', p='htc', t='00-00:20:00', c='1', mem='12G')
-    # workflow(True, q='public', p='htc', t='00-00:10:00', c='1', mem='12G', G='1')
+    # workflow(False, q='public', p='htc', t='00-00:10:00', c='1', mem='24G', G='1')
     # md(submit=False, md_module=md_module, ntomp=4, mem='2G', q='public', p='htc', t='00-01:00:00', G=1)
     # md(submit=True, md_module=md_module, ntomp=4, mem='4G', q='public', p='htc', t='00-00:15:00', G=1)
     # extend(submit=True, md_module=md_module, ntomp=8, mem='2G', q='public', p='htc', t='00-04:00:00', G=1)
     # extend(submit=True, md_module=md_module, ntomp=8, mem='2G', q='grp_sozkan', p='general', t='01-00:00:00', G=1)
     # trjconv(submit=True, md_module=md_module, t='00-00:20:00', q='public', p='htc', c='1', mem='2G')
     # tdlrt_analysis(submit=True, mem='7G', t='00-00:20:00',)
-    get_averages(pattern='ccf_pv*.npy', submit=True, mem='4G') 
+    # get_averages(pattern='ccf_1_vv*.npy', submit=True, c='8', mem='48G')  # mem = c * 2 * arr_size_in_GB
+    ajob('read_nikhils_files', submit=False)
