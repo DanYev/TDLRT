@@ -191,13 +191,13 @@ def tdlrt_analysis(sysdir, sysname, runname):
         u = mda.Universe(top, traj)
         ps = io.read_positions(u, u.atoms) # (n_atoms*3, nframes)
         vs = io.read_velocities(u, u.atoms) # (n_atoms*3, nframes)
-    ps = ps - ps[:, 0][..., None]
+    # ps = ps - ps[:, 0][..., None]
     # ps -= ps.mean(axis=1)[..., None]
     # CCF calculations
-    adict = {'pv': (ps, vs), 'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
+    adict = {'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
     for key, item in adict.items(): # DT = TSTEP * NOUT
         v1, v2 = item
-        corr = mdm.ccf(v1, v2, ntmax=1000, n=1, mode='gpu', center=False, dtype=np.float32) # falls back on cpu if no cuda
+        corr = mdm.ccf(v1, v2, ntmax=400, n=1, mode='gpu', center=False, dtype=np.float32) # falls back on cpu if no cuda
         corr_file = mdrun.lrtdir / f'ccf_1_{key}.npy'
         np.save(corr_file, corr)    
         logger.info("Saved CCFs to %s", corr_file)
@@ -315,7 +315,7 @@ def read_nikhils_files(sysdir):
     p_files = sorted(list(dpath.glob("*aligned_displacements.npy")))
     v_files = sorted(list(dpath.glob("*aligned_velocities.npy")))
     pairs = list(zip(p_files, v_files))
-    for pfile, vfile in pairs:
+    for pfile, vfile in pairs[::4]:
         pbase = pfile.name.split("_aligned_")[0]
         vbase = vfile.name.split("_aligned_")[0]
         if pbase != vbase:
@@ -325,16 +325,16 @@ def read_nikhils_files(sysdir):
         outdir = Path(sysdir) / base / "mdruns" / "mdrun"
         outdir.mkdir(parents=True, exist_ok=True)
         logger.info("Reading %s and %s", pfile, vfile)
-        ps = np.load(pfile).astype(np.float32)[:-1:10, ...]  # downsample every 10 frames
-        vs = np.load(vfile).astype(np.float32)[::10, ...]  # downsample every 10 frames
-        logger.info("Updated shapes: %s and %s", ps.shape, vs.shape)
-        ps = ps.reshape(ps.shape[1] * 3, ps.shape[0])
-        vs = vs.reshape(vs.shape[1] * 3, vs.shape[0])
+        ps = np.load(pfile).astype(np.float32)[::10, ...]
+        vs = np.load(vfile).astype(np.float32)[::10, ...]
         logger.info("Shapes: %s and %s", ps.shape, vs.shape)
+        psr = ps.transpose(1, 2, 0).reshape(-1, ps.shape[0])
+        vsr = vs.transpose(1, 2, 0).reshape(-1, vs.shape[0])
+        logger.info("Updated shapes: %s and %s", psr.shape, vsr.shape)
         pos_file = outdir / 'positions.npy'
         vel_file = outdir / 'velocities.npy'
-        np.save(pos_file, ps)
-        np.save(vel_file, vs)
+        np.save(pos_file, psr)
+        np.save(vel_file, vsr)
         logger.info("Saved to %s and %s", pos_file, vel_file)
 
 ##############################################################################################
