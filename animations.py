@@ -181,7 +181,7 @@ def animate_hm(fig, img, data, title, dt=0.02, outfile="data/hm_ani.mp4"):
 
 
 def make_hm_animation(sysname, key):
-    infile = Path("data") / sysname / f"ccf_{key}_av.npy"
+    infile = Path("data") / sysname / f"ccf_1_{key}_av.npy"
     ccf = np.load(infile)
     fname = os.path.basename(infile).replace('.npy', '')
     data = ccf # - ccf[:, :, -1][..., None]
@@ -198,8 +198,8 @@ def make_hm_animation(sysname, key):
 
 if __name__ == '__main__':
     datdir = 'data'
-    sysnames =['1btl_nve']
+    sysnames =['1btl_nve_nikhil']
     for sysname in sysnames:
-        alist = ['pv', 'vv']
+        alist = ['vv']
         for key in alist:
             make_hm_animation(sysname, key)

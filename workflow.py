@@ -178,6 +178,7 @@ def trjconv(sysdir, sysname, runname):
 
 def tdlrt_analysis(sysdir, sysname, runname):
     mdrun = MDRun(sysdir, sysname, runname)
+    mdrun.prepare_files()
     ps_path = str(mdrun.rundir / f"positions.npy")
     vs_path = str(mdrun.rundir / f"velocities.npy")
     if (Path(ps_path).exists() and Path(vs_path).exists()):
@@ -196,7 +197,7 @@ def tdlrt_analysis(sysdir, sysname, runname):
     adict = {'pv': (ps, vs), 'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
     for key, item in adict.items(): # DT = TSTEP * NOUT
         v1, v2 = item
-        corr = mdm.ccf(v1, v2, ntmax=2000, n=1, mode='gpu', center=False, dtype=np.float32) # falls back on cpu if no cuda
+        corr = mdm.ccf(v1, v2, ntmax=1000, n=1, mode='gpu', center=False, dtype=np.float32) # falls back on cpu if no cuda
         corr_file = mdrun.lrtdir / f'ccf_1_{key}.npy'
         np.save(corr_file, corr)    
         logger.info("Saved CCFs to %s", corr_file)
@@ -307,6 +308,34 @@ def save_pos_vel_to_numpy(sysdir, sysname, runname, selection=SELECTION, dtype=n
     np.save(vel_file, vel_flat)
     logger.info('Saved positions (%s) and velocities (%s) for %d atoms and %d frames', pos_file, vel_file, n_atoms, n_frames)
 
+
+def read_nikhils_files(sysdir):
+    dpath = Path("/scratch/nrames19/Time-Dependent/BioEmuRuns/1BTL-RS2")
+    sysdir = Path("systems/1btl_nve_nikhil")
+    p_files = sorted(list(dpath.glob("*aligned_displacements.npy")))
+    v_files = sorted(list(dpath.glob("*aligned_velocities.npy")))
+    pairs = list(zip(p_files, v_files))
+    for pfile, vfile in pairs:
+        pbase = pfile.name.split("_aligned_")[0]
+        vbase = vfile.name.split("_aligned_")[0]
+        if pbase != vbase:
+            logger.warning("Base names do not match: %s vs %s", pbase, vbase)
+            continue
+        base = pbase
+        outdir = Path(sysdir) / base / "mdruns" / "mdrun"
+        outdir.mkdir(parents=True, exist_ok=True)
+        logger.info("Reading %s and %s", pfile, vfile)
+        ps = np.load(pfile).astype(np.float32)[:-1:10, ...]  # downsample every 10 frames
+        vs = np.load(vfile).astype(np.float32)[::10, ...]  # downsample every 10 frames
+        logger.info("Updated shapes: %s and %s", ps.shape, vs.shape)
+        ps = ps.reshape(ps.shape[1] * 3, ps.shape[0])
+        vs = vs.reshape(vs.shape[1] * 3, vs.shape[0])
+        logger.info("Shapes: %s and %s", ps.shape, vs.shape)
+        pos_file = outdir / 'positions.npy'
+        vel_file = outdir / 'velocities.npy'
+        np.save(pos_file, ps)
+        np.save(vel_file, vs)
+        logger.info("Saved to %s and %s", pos_file, vel_file)
 
 ##############################################################################################
 ##############################################################################################
