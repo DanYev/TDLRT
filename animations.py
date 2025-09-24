@@ -193,12 +193,12 @@ def make_hm_animation(sysname, key):
     fig.savefig(f"png/{fname}.png")
     title = f'{key.upper()} CCF'
     outfile = f"png/{sysname}_{fname}.mp4"
-    animate_hm(fig, img, data[:, :, :-1], title, dt=20, outfile=outfile)
+    animate_hm(fig, img, data[:, :, :400], title, dt=20, outfile=outfile)
   
 
 if __name__ == '__main__':
     datdir = 'data'
-    sysnames =['1btl_nve_nikhil']
+    sysnames =['1btl_nve']
     for sysname in sysnames:
         alist = ['vv']
         for key in alist:

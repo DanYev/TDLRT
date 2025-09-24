@@ -151,5 +151,5 @@ if __name__ == "__main__":
     # extend(submit=True, md_module=md_module, ntomp=8, mem='2G', q='grp_sozkan', p='general', t='01-00:00:00', G=1)
     # trjconv(submit=True, md_module=md_module, t='00-00:20:00', q='public', p='htc', c='1', mem='2G')
     # tdlrt_analysis(submit=True, mem='7G', t='00-00:20:00',)
-    # get_averages(pattern='ccf_1_vv*.npy', submit=True, c='8', mem='48G')  # mem = c * 2 * arr_size_in_GB
-    ajob('read_nikhils_files', submit=False)
+    get_averages(pattern='ccf_1_pv*.npy', submit=True, c='8', mem='48G')  # mem = c * 2 * arr_size_in_GB
+    # ajob('read_nikhils_files', submit=False)
