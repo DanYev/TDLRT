@@ -160,7 +160,7 @@ def plot_hm(data, cmap='bwr'):
     logger.info("Plotting heatmap")
     fig, ax = rfplot.init_figure(grid=(1, 1), axsize=(6, 6))
     scale = np.average(np.abs(data))
-    factor = 4
+    factor = 10
     img = rfplot.make_heatmap(ax, data, cmap=cmap, interpolation=None, vmin=-factor*scale, vmax=factor*scale)
     set_hm_parameters(ax, xlabel='Perturbed Residue', ylabel='Coupled Residue')
     return fig, img  
@@ -180,26 +180,30 @@ def animate_hm(fig, img, data, title, dt=0.02, outfile="data/hm_ani.mp4"):
     logger.info("Done. Saved to %s", outfile)
 
 
-def make_hm_animation(sysname, key):
-    infile = Path("data") / sysname / f"ccf_1_{key}_av.npy"
-    ccf = np.load(infile)
+def make_pertmats(sysname, fbase='ccf', key='vv'):
+    infile = Path("data") / sysname / f"{fbase}_{key}_av.npy"
     fname = os.path.basename(infile).replace('.npy', '')
-    data = ccf # - ccf[:, :, -1][..., None]
-    # pertmat = mdm.td_perturbation_matrix(data)
-    # data = pertmat # - pertmat[:, :, 400][..., None]
-    # data = sliding_window_average(data, window_size=10)
-    # outfile = mdsys.pngdir / 'pp_corr.mp4'
+    ccf = np.load(infile)
+    data = mdm.td_perturbation_matrix(ccf)
+    np.save(f"data/{sysname}/pertmat_{key}_av.npy", data)
+
+
+def make_hm_animation(sysname, fbase='pertmat', key='vv'):
+    infile = Path("data") / sysname / f"{fbase}_{key}_av.npy"
+    fname = os.path.basename(infile).replace('.npy', '')
+    data = np.load(infile)
     fig, img = plot_hm(data[:, :, 1], cmap='bwr')
     fig.savefig(f"png/{fname}.png")
     title = f'{key.upper()} CCF'
     outfile = f"png/{sysname}_{fname}.mp4"
-    animate_hm(fig, img, data[:, :, :400], title, dt=20, outfile=outfile)
+    animate_hm(fig, img, data, title, dt=20, outfile=outfile)
   
 
 if __name__ == '__main__':
     datdir = 'data'
-    sysnames =['1btl_nve']
+    sysnames =['1btl_nve_nikhil']
     for sysname in sysnames:
-        alist = ['vv']
+        alist = ['pv', 'vv']
         for key in alist:
-            make_hm_animation(sysname, key)
+            # make_pertmats(sysname, fbase='ccf_1', key=key)
+            make_hm_animation(sysname, fbase='pertmat', key=key)

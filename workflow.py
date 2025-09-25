@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 import warnings
 import numpy as np
+import cupy as cp
 import multiprocessing as mp
 import MDAnalysis as mda
 from MDAnalysis.transformations.fit import fit_rot_trans
@@ -197,10 +198,29 @@ def tdlrt_analysis(sysdir, sysname, runname):
     adict = {'pv': (ps, vs), 'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
     for key, item in adict.items(): # DT = TSTEP * NOUT
         v1, v2 = item
-        corr = mdm.ccf(v1, v2, ntmax=1000, n=1, mode='gpu', center=False, dtype=np.float32) # falls back on cpu if no cuda
-        corr_file = mdrun.lrtdir / f'ccf_1_{key}.npy'
+        corr = mdm.ccf(v1, v2, ntmax=4000, n=1, mode='gpu', center=False, dtype=np.float32, buffer_c=0.8) # falls back on cpu if no cuda
+        corr_file = mdrun.lrtdir / f'ccfs_{key}.npy'
         np.save(corr_file, corr)    
         logger.info("Saved CCFs to %s", corr_file)
+
+
+def ffts(dtype=None, ntmax=None, center=False):
+    logger.info("Computing FFTs on GPU.")
+    infile = 'data/1btl_nve_nikhil/pertmat_vv_av.npy'
+    data = np.load(infile)
+    if dtype is None:
+        dtype = data.dtype
+    nt = data.shape[-1]
+    nx = data.shape[0]
+    ny = data.shape[1]
+    if ntmax is None or ntmax > (nt + 1) // 2:
+        ntmax = (nt + 1) // 2
+    if center:
+        data = data - np.mean(data, axis=-1, keepdims=True)
+    data = cp.asarray(data, dtype=dtype)
+    data_f = cp.fft.fft(data, n=2 * nt, axis=-1)
+    np.save(infile.replace('.npy', f'_fftn{ntmax}.npy'), cp.asnumpy(data_f[:, :, :ntmax]))
+    logger.info("Saved FFTs to %s", infile.replace('.npy', f'_fftn{ntmax}.npy'))
 
 
 def get_averages(sysdir, pattern, dtype=None, *args):
@@ -309,7 +329,7 @@ def save_pos_vel_to_numpy(sysdir, sysname, runname, selection=SELECTION, dtype=n
     logger.info('Saved positions (%s) and velocities (%s) for %d atoms and %d frames', pos_file, vel_file, n_atoms, n_frames)
 
 
-def read_nikhils_files(sysdir):
+def read_nikhils_files():
     dpath = Path("/scratch/nrames19/Time-Dependent/BioEmuRuns/1BTL-RS2")
     sysdir = Path("systems/1btl_nve_nikhil")
     p_files = sorted(list(dpath.glob("*aligned_displacements.npy")))
@@ -324,8 +344,12 @@ def read_nikhils_files(sysdir):
         outdir = Path(sysdir) / base / "mdruns" / "mdrun"
         outdir.mkdir(parents=True, exist_ok=True)
         logger.info("Reading %s and %s", pfile, vfile)
-        ps = np.load(pfile).astype(np.float32)[::10, ...]
-        vs = np.load(vfile).astype(np.float32)[::10, ...]
+        ps = np.load(pfile).astype(np.float32)
+        vs = np.load(vfile).astype(np.float32)
+        ntmax = min(ps.shape[0], vs.shape[0])
+        tstep = 1 # frames
+        ps = ps[:ntmax:tstep, ...]
+        vs = vs[:ntmax:tstep, ...]
         # logger.info("Shapes: %s and %s", ps.shape, vs.shape)
         psr = ps.transpose(1, 2, 0).reshape(-1, ps.shape[0])
         vsr = vs.transpose(1, 2, 0).reshape(-1, vs.shape[0])
@@ -335,6 +359,11 @@ def read_nikhils_files(sysdir):
         np.save(pos_file, psr)
         np.save(vel_file, vsr)
         logger.info("Saved to %s and %s", pos_file, vel_file)
+
+
+def pca_data():
+    pass
+
 
 ##############################################################################################
 ##############################################################################################
@@ -478,11 +507,7 @@ def _main():
     functions = _get_module_functions(module)
     if command not in functions:
         raise ValueError(f"Unknown command: {command}. Available commands for {module_name}: {', '.join(functions.keys())}")
-    try:
-        functions[command](*args)
-    except Exception as e:
-        print(f"Error executing {module_name}.{command}: {str(e)}")
-        raise
+    functions[command](*args)
 
 
 if __name__ == "__main__":

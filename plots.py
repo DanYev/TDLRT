@@ -1,7 +1,9 @@
 import os
+from pathlib import Path
+import sys
+import MDAnalysis as mda
 import numpy as np
 import pandas as pd
-import sys
 from reforge import io, mdm
 from reforge.mdsystem import gmxmd
 from reforge.plotting import *
@@ -169,18 +171,6 @@ def make_pdb(system, label, factor=None):
     set_bfactors_by_residue(system.inpdb, err, err_pdb)
 
 
-def make_cg_pdb(system, label, factor=None):
-    data = np.load(os.path.join(system.datdir, f'{label}_av.npy'))
-    err = np.load(os.path.join(system.datdir, f'{label}_err.npy'))
-    if factor:
-        data *= factor
-        err *= factor
-    data_pdb = os.path.join(system.pngdir, f'{label}.pdb')
-    err_pdb = os.path.join(system.pngdir, f'{label}_err.pdb')
-    set_bfactors_by_atom(system.root / 'mdci.pdb', data, data_pdb)
-    set_bfactors_by_atom(system.root / 'mdci.pdb', err, err_pdb)
-
-
 def make_enm_pdb(system, label, factor=None):
     data = np.load(os.path.join(system.datdir, f'{label}_enm.npy'))
     if factor:
@@ -212,23 +202,6 @@ def make_delta_pdb(system_1, system_2, label, out_name, filter=True, factor=None
     logger.info('Saved Delta PDB to %s', data_pdb)
 
 
-def make_delta_cg_pdb(system_1, system_2, label, out_name, factor=None):
-    data_1 = np.load(os.path.join(system_1.datdir, f'{label}_av.npy'))
-    err_1 = np.load(os.path.join(system_1.datdir, f'{label}_err.npy'))
-    data_2 = np.load(os.path.join(system_2.datdir, f'{label}_av.npy'))
-    err_2 = np.load(os.path.join(system_2.datdir, f'{label}_err.npy'))  
-    if factor:
-        data_1 *= factor
-        err_1 *= factor
-        data_2 *= factor
-        err_2 *= factor
-    data = data_1 - data_2
-    err = np.sqrt(err_1**2 + err_2**2)
-    data_pdb = os.path.join('systems', 'pdb', out_name + '.pdb')
-    err_pdb = os.path.join('systems', 'pdb', out_name + '_err.pdb')
-    set_bfactors_by_atom(system.root / 'mdci.pdb', data, data_pdb)
-    set_bfactors_by_atom(system.root / 'mdci.pdb', err, err_pdb)
-
 def rmsf_pdb(system):
     logger.info(f'Making RMSF PDB')
     make_cg_pdb(system, 'rmsf', factor=10)
@@ -240,20 +213,9 @@ def dfi_pdb(system):
 
 
 def dci_pdbs(system):
-    # chains = ['W']
-    chains = system.chains
-    for chain in chains:
-        logger.info(f'Making DCI {chain} PDB')
-        label = f'gdci_{chain}'
-        make_pdb(system, label)
-
-
-def pocket_dci_pdbs(system):
-    pockets = ['ptc']
-    for chain in pockets:
-        logger.info(f'Making DCI {chain} PDB')
-        label = f'gdci_{chain}'
-        make_pdb(system, label)
+    logger.info(f'Making DCI PDB')
+    label = f'gdci'
+    make_pdb(system, label)
 
 
 def runs_metric(system, metric):
@@ -270,44 +232,100 @@ def runs_metric(system, metric):
     plot_figure(fig, ax, figname=system.sysname.upper(), figpath='png/metric.png',)
 
 
-def make_hpf_pdb(system):
-    data_1 = np.load(os.path.join(system.datdir, f'gdci_T_av.npy'))
-    data_2 = np.load(os.path.join(system.datdir, f'gdci_W_av.npy'))
-    data_3 = np.load(os.path.join(system.datdir, f'gdci_Q_av.npy'))
-    data = (data_1 + data_2) / 2.0
-    data_pdb = os.path.join(system.pngdir, f'hpf.pdb')
-    set_bfactors_by_residue(system.inpdb, data, data_pdb)
+def plot_contact_map(inpdb):
+    fname = os.path.basename(inpdb).replace('.pdb', '')
+    atoms = io.pdb2atomlist(inpdb)
+    residues = atoms.residues
+    nres = len(residues)
+    contact_map = np.zeros((nres, nres))
+    for i in range(nres):
+        for j in range(nres):
+            pos_i = np.array(residues[i].vecs)
+            pos_j = np.array(residues[j].vecs)
+            pos_ij = np.average(pos_i, axis=0) - np.average(pos_j, axis=0)
+            dist = np.linalg.norm(pos_ij)
+            contact_map[i, j] = dist
+    vmax = 0.8 * np.average(contact_map)
+    fig, ax = init_figure(grid=(1, 1), axsize=(8, 8))
+    make_heatmap(ax, contact_map, cmap='Greys', interpolation=None, vmin=0, vmax=vmax)
+    set_ax_parameters(ax, xlabel='Residue', ylabel='Residue')
+    plot_figure(fig, ax, figname='Contact Map', figpath=f'png/{fname}_contact_map.png',)
+
+
+def plot_ccf(i, j, sysname, fbase='ccf', key='vv', outtag=None):
+    files = io.pull_files(f'data/{sysname}', f'{fbase}_{key}_av.npy')
+    files = [f for f in files if '_av' in f]
+    datas = [np.load(file) for file in files]
+    datas = [data[i, j, :] for data in datas]
+    xs = [np.arange(data.shape[0])*10 for data in datas]
+    labels = [file.split('/')[-1].replace('.npy', '') for file in files]
+    params = [{'lw':2, 'label':label} for label in labels]
+    # Plottingjj
+    fig, ax = init_figure(grid=(1, 1), axsize=(12, 5))
+    make_plot(ax, xs, datas, params)
+    set_ax_parameters(ax, xlabel='Time (fs)', ylabel='CCF')
+    outdir = Path('png') / sysname / key
+    outdir.mkdir(parents=True, exist_ok=True)
+    outtag = outtag if outtag else f'{fbase}'
+    plot_figure(fig, ax, figname=f'{key.upper()} CCF {i}_{j}', figpath=outdir / f'{outtag}_{i}_{j}.png')
+
+
+def plot_fft_ccf(i, j, sysname, fbase='ccf', key='vv'):
+    files = io.pull_files(f'data/{sysname}', f'{fbase}_{key}_av_fftn*.npy')
+    files = [f for f in files if '_av' in f]
+    datas = [np.load(file) for file in files]
+    ys = [np.abs(data[i, j, 1:]) for data in datas]
+    xs = [np.angle(data[i, j, 1:]) for data in datas]
+    labels = [file.split('/')[-1].replace('.npy', '') for file in files]
+    params = [{'lw':2, 'label':label} for label in labels]
+    # Plottingjj
+    fig, ax = init_figure(grid=(1, 1), axsize=(12, 5))
+    make_plot(ax, xs, ys, params)
+    set_ax_parameters(ax, xlabel='Freq (1/fs)', ylabel='CCF')
+    outdir = Path('png') / sysname
+    outdir.mkdir(parents=True, exist_ok=True)
+    plot_figure(fig, ax, figname=f'{key.upper()} CCF {i}_{j}', figpath=outdir / f'{fbase}_{i}_{j}.png')
+
+
+def plot_test(sysname, fbase='pertmat', key='vv'):
+    infile = Path("data") / sysname / f"{fbase}_{key}_av.npy"
+    fname = os.path.basename(infile).replace('.npy', '')
+    ccf = np.load(infile)
+    data = np.average(ccf, axis=-1)
+    ys = [np.average(data, axis=1)]
+    xs = [np.arange(len(y)) + 26 for y in ys]
+    fig, ax = init_figure(grid=(1, 1), axsize=(12, 5))
+    make_plot(ax, xs, ys)
+    set_ax_parameters(ax, xlabel='Residue', ylabel='PM_av', loc='upper right')
+    plot_figure(fig, ax, figname=sysname.upper(), figpath=Path('png') / f"{sysname}_pm_av.png",)
+
+
+def resid_to_index(pdb, resids):
+    u = mda.Universe(pdb)
+    cas = u.select_atoms("name CA")
+    all_resids = np.array(cas.resids)
+    all_ids = np.arange(len(all_resids))
+    ids = all_ids[np.isin(all_resids, resids)]
+    return ids
+
+
+def plot_allosteric_control(sysname, fbase='pertmat', key='pv'):
+    for pert in allosteric_ids:
+        for resp in active_ids:
+            plot_ccf(pert, resp, sysname, fbase=fbase, key=key, outtag='active')
+        for resp in control_ids:
+            plot_ccf(pert, resp, sysname, fbase=fbase, key=key, outtag='control')
 
 
 if __name__ == '__main__':
-    sysdir = 'systems_kras' 
-    system = gmxmd.GmxSystem(sysdir, 'go_gmx')
-    # plot_cluster_dfi(system,)
-    plot_dfi(system, tag="dfi")
-    plot_pdfi(system, tag="dfi")
-    # plot_ggdci(system)
-    # plot_dci(system)
-    # plot_asym(system)
-    # plot_rmsf(system)
-    # plot_rmsd(system)
-    # # # PDBs
-    # rmsf_pdb(system)
-    # dfi_pdb(system)
-    # dci_pdbs(system)
-    # pocket_dci_pdbs(system)
-    # make_enm_pdb(system, label='dfi')
-    # make_hpf_pdb(system)
-    # # Deltas
-    # variant_1 = 'mgh'
-    # variant_2 = 'wt'
-    # label = 'dfi'
-    # system_1 = gmxmd.GmxSystem(sysdir, f'ribosome_{variant_1}')
-    # system_2 = gmxmd.GmxSystem(sysdir, f'ribosome_{variant_2}')
-    # make_delta_pdb(system_1, system_2, label=label, out_name=f'{label}_{variant_1}_{variant_2}', filter=True)
-    # # make_delta_cg_pdb(system_1, system_2, label='rmsf', out_name=f'drmsf_{variant_1}_{variant_2}')
-    # # runs_metric(system, 'rmsf*')
-
-
-
-
-
+    pdb_id = '1btl'
+    allosteric_sites = [44, 203, 232, 249, 262, 286]
+    active_sites = [70, 130, 160]
+    control_sites = [55, 150, 226, 256]
+    allosteric_ids = resid_to_index(f'systems/{pdb_id}.pdb', allosteric_sites)
+    active_ids = resid_to_index(f'systems/{pdb_id}.pdb', active_sites)
+    control_ids = resid_to_index(f'systems/{pdb_id}.pdb', control_sites)
+    # PLOTS 
+    # plot_contact_map('systems/1btl.pdb')
+    # plot_test('1btl_nve_nikhil', fbase='pertmat', key='pv')
+    plot_allosteric_control('1btl_nve_nikhil', fbase='pertmat', key='vv')
