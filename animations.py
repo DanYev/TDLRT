@@ -181,29 +181,80 @@ def animate_hm(fig, img, data, title, dt=0.02, outfile="data/hm_ani.mp4"):
 
 
 def make_pertmats(sysname, fbase='ccf', key='vv'):
-    infile = Path("data") / sysname / f"{fbase}_{key}_av.npy"
+    infile = Path("systems") / sysname / "mdruns" / "mdrun_1" / "lrt_analysis" / f"{fbase}_{key}.npy"
     fname = os.path.basename(infile).replace('.npy', '')
-    ccf = np.load(infile)
-    data = mdm.td_perturbation_matrix(ccf)
-    np.save(f"data/{sysname}/pertmat_{key}_av.npy", data)
+    ccf = np.load(infile)[:, :, :1000]
+    data = ccf.copy()
+    # Also create diagonal evolution plot
+    diag_outfile = f"data/{sysname}_{fname}_diagonal.png"
+    plot_diagonal_evolution(data, step=200, outfile=diag_outfile)
+    # data = mdm.td_perturbation_matrix(ccf)
+    # np.save(f"data/pmat_{key}_av.npy", data)
+
+
+def plot_diagonal_evolution(data, step=50, outfile="data/diagonal_evolution.png"):
+    """
+    Plot how diagonal elements of the matrix evolve over time (last axis).
+    
+    Args:
+        data: 3D array with shape (n_residues, n_residues, n_frames)
+        step: Step size for sampling diagonal positions (default: 10)
+        outfile: Output file path for the plot
+    """
+    logger.info("Plotting diagonal evolution")
+    
+    # Extract diagonal elements with specified step
+    n_residues = data.shape[0]
+    n_frames = data.shape[2]
+    diagonal_indices = np.arange(0, n_residues, step)
+    
+    # Create time axis (assuming frames represent time)
+    time_axis = np.arange(n_frames) * 20  # Assuming each frame is 20 fs apart
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Plot diagonal evolution for each selected position
+    for i, diag_idx in enumerate(diagonal_indices):
+        diagonal_values = data[diag_idx, diag_idx, :]  # Extract diagonal element over time
+        ax.plot(time_axis, diagonal_values, label=f'Residue {diag_idx}', linewidth=2)
+    
+    # Customize plot
+    ax.set_xlabel('Time, fs', fontsize=14)
+    ax.set_ylabel('Diagonal Value', fontsize=14)
+    ax.set_title('Evolution of Diagonal Elements Over Time', fontsize=16)
+    ax.grid(True, alpha=0.3)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    # Adjust layout and save
+    plt.tight_layout()
+    plt.savefig(outfile, dpi=300, bbox_inches='tight')
+    logger.info(f"Diagonal evolution plot saved to {outfile}")
+    plt.close()
+    
+    return diagonal_indices, time_axis
 
 
 def make_hm_animation(sysname, fbase='pertmat', key='vv'):
-    infile = Path("data") / sysname / f"{fbase}_{key}_av.npy"
+    infile = Path("data") / f"{fbase}_{key}_av.npy"
     fname = os.path.basename(infile).replace('.npy', '')
-    data = np.load(infile)
+    data = np.load(infile)[:, :, :]
     fig, img = plot_hm(data[:, :, 1], cmap='bwr')
-    fig.savefig(f"png/{fname}.png")
+    fig.savefig(f"data/{fname}.png")
     title = f'{key.upper()} CCF'
-    outfile = f"png/{sysname}_{fname}.mp4"
-    animate_hm(fig, img, data, title, dt=20, outfile=outfile)
+    outfile = f"data/{sysname}_{fname}.mp4"
+    # animate_hm(fig, img, data, title, dt=20, outfile=outfile)
+    
+    # Also create diagonal evolution plot
+    diag_outfile = f"data/{sysname}_{fname}_diagonal.png"
+    plot_diagonal_evolution(data, step=50, outfile=diag_outfile)
   
 
 if __name__ == '__main__':
     datdir = 'data'
-    sysnames =['1btl_nve_nikhil']
+    sysnames =['enm_sys']
     for sysname in sysnames:
-        alist = ['pv', 'vv']
+        alist = ['vv']
         for key in alist:
-            # make_pertmats(sysname, fbase='ccf_1', key=key)
-            make_hm_animation(sysname, fbase='pertmat', key=key)
+            make_pertmats(sysname, fbase='ccfs', key=key)
+            # make_hm_animation(sysname, fbase='pmat', key=key)

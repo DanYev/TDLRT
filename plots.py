@@ -252,12 +252,12 @@ def plot_contact_map(inpdb):
     plot_figure(fig, ax, figname='Contact Map', figpath=f'png/{fname}_contact_map.png',)
 
 
-def plot_ccf(i, j, sysname, fbase='ccf', key='vv', outtag=None):
+def plot_ccf(i, j, sysname, dt=10, fbase='ccf', key='vv', outtag=None):
     files = io.pull_files(f'data/{sysname}', f'{fbase}_{key}_av.npy')
     files = [f for f in files if '_av' in f]
     datas = [np.load(file) for file in files]
     datas = [data[i, j, :] for data in datas]
-    xs = [np.arange(data.shape[0])*10 for data in datas]
+    xs = [np.arange(data.shape[0])*dt for data in datas]
     labels = [file.split('/')[-1].replace('.npy', '') for file in files]
     params = [{'lw':2, 'label':label} for label in labels]
     # Plottingjj
@@ -309,12 +309,12 @@ def resid_to_index(pdb, resids):
     return ids
 
 
-def plot_allosteric_control(sysname, fbase='pertmat', key='pv'):
+def plot_allosteric_control(sysname, **kwargs):
     for pert in allosteric_ids:
         for resp in active_ids:
-            plot_ccf(pert, resp, sysname, fbase=fbase, key=key, outtag='active')
+            plot_ccf(pert, resp, sysname, outtag='active', **kwargs)
         for resp in control_ids:
-            plot_ccf(pert, resp, sysname, fbase=fbase, key=key, outtag='control')
+            plot_ccf(pert, resp, sysname, outtag='control', **kwargs)
 
 
 if __name__ == '__main__':
@@ -328,4 +328,4 @@ if __name__ == '__main__':
     # PLOTS 
     # plot_contact_map('systems/1btl.pdb')
     # plot_test('1btl_nve_nikhil', fbase='pertmat', key='pv')
-    plot_allosteric_control('1btl_nve_nikhil', fbase='pertmat', key='vv')
+    plot_allosteric_control('1btl_nve', fbase='pmat', key='pv', dt=20)
