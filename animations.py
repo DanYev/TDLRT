@@ -181,9 +181,9 @@ def animate_hm(fig, img, data, title, dt=0.02, outfile="data/hm_ani.mp4"):
 
 
 def make_pertmats(sysname, fbase='ccf', key='vv'):
-    infile = Path("systems") / sysname / "mdruns" / "mdrun_1" / "lrt_analysis" / f"{fbase}_{key}.npy"
+    infile = Path("systems") / sysname / "mdruns" / "mdrun" / "lrt_analysis" / f"{fbase}_{key}.npy"
     fname = os.path.basename(infile).replace('.npy', '')
-    ccf = np.load(infile)[:, :, :1000]
+    ccf = np.load(infile)[:, :, :200]
     data = ccf.copy()
     # Also create diagonal evolution plot
     diag_outfile = f"data/{sysname}_{fname}_diagonal.png"
@@ -215,10 +215,15 @@ def plot_diagonal_evolution(data, step=50, outfile="data/diagonal_evolution.png"
     fig, ax = plt.subplots(figsize=(10, 6))
     
     # Plot diagonal evolution for each selected position
+    all_diagonal_values = []
     for i, diag_idx in enumerate(diagonal_indices):
         diagonal_values = data[diag_idx, diag_idx, :]  # Extract diagonal element over time
-        ax.plot(time_axis, diagonal_values, label=f'Residue {diag_idx}', linewidth=2)
-    
+        all_diagonal_values.append(diagonal_values)
+        # ax.plot(time_axis, diagonal_values, label=f'Residue {diag_idx}', linewidth=2)
+    all_diagonal_values = np.array(all_diagonal_values)
+    diag_average = np.mean(all_diagonal_values, axis=0)
+    ax.plot(time_axis, diag_average, label='Diagonal average', linewidth=2)
+
     # Customize plot
     ax.set_xlabel('Time, fs', fontsize=14)
     ax.set_ylabel('Diagonal Value', fontsize=14)
@@ -244,7 +249,6 @@ def make_hm_animation(sysname, fbase='pertmat', key='vv'):
     title = f'{key.upper()} CCF'
     outfile = f"data/{sysname}_{fname}.mp4"
     # animate_hm(fig, img, data, title, dt=20, outfile=outfile)
-    
     # Also create diagonal evolution plot
     diag_outfile = f"data/{sysname}_{fname}_diagonal.png"
     plot_diagonal_evolution(data, step=50, outfile=diag_outfile)
@@ -252,9 +256,9 @@ def make_hm_animation(sysname, fbase='pertmat', key='vv'):
 
 if __name__ == '__main__':
     datdir = 'data'
-    sysnames =['enm_sys']
+    sysnames =['1btl_nve/sample_001']  # ['1btl_go_solvated', '1btl_en_solvated']
     for sysname in sysnames:
         alist = ['vv']
         for key in alist:
-            make_pertmats(sysname, fbase='ccfs', key=key)
+            make_pertmats(sysname, fbase='ccf', key=key)
             # make_hm_animation(sysname, fbase='pmat', key=key)

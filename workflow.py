@@ -9,8 +9,9 @@ import MDAnalysis as mda
 import openmm as mm
 from openmm import app, Platform, unit
 from reforge import io, mdm
+from reforge.martini import martini_openmm
 from reforge.mdsystem.mdsystem import MDSystem, MDRun
-from reforge.mdsystem.mmmd import MmSystem, MmRun, MmReporter
+from reforge.mdsystem.mmmd import MmSystem, MmRun, MmReporter, convert_trajectories
 from reforge.mdsystem.gmxmd import GmxSystem
 from reforge.utils import clean_dir, get_logger
 import plots
@@ -24,23 +25,23 @@ INPDB = '1btl.pdb'
 TEMPERATURE = 300 * unit.kelvin  # for equilibraion
 GAMMA = 1 / unit.picosecond
 PRESSURE = 1 * unit.bar
-TOTAL_TIME = 200 * unit.picoseconds
-TSTEP = 2 * unit.femtoseconds
+TOTAL_TIME = 100 * unit.picoseconds
+TSTEP = 20 * unit.femtoseconds
 TOTAL_STEPS = int(TOTAL_TIME / TSTEP)
 # Report intervals
-TRJ_NOUT = 1           # Trajectory   
-LOG_NOUT = 10000         # Log file   
-CHK_NOUT = 100000        # Checkpoint
-OUT_SELECTION = "name CA"
-TRJEXT = 'trr' # trr saves positions, velocities, forces
-SELECTION = "name CA" 
+TRJ_NOUT = 1              # Trajectory   
+LOG_NOUT = 10000            # Log file   
+CHK_NOUT = 100000           # Checkpoint
+OUT_SELECTION = "name BB"
+TRJEXT = 'trr'              # trr saves positions, velocities, forces
+SELECTION = "name BB" 
 
 
 def workflow(sysdir, sysname, runname):
-    # md_nve(sysdir, sysname, runname)
-    # trjconv(sysdir, sysname, runname)
-    # save_pos_vel_to_numpy(sysdir, sysname, runname, selection=SELECTION, dtype=np.float32)
-    # tdlrt_analysis(sysdir, sysname, runname)
+    md_nve(sysdir, sysname, runname)
+    trjconv(sysdir, sysname, runname)
+    save_pos_vel_to_numpy(sysdir, sysname, runname, selection=SELECTION, dtype=np.float32)
+    tdlrt_analysis(sysdir, sysname, runname)
 
 ###########################################################
 ### Setup EMU ###
@@ -115,10 +116,11 @@ def setup_martini_gmx(sysdir, sysname):
     mdsys = GmxSystem(sysdir, sysname)
     inpdb = mdsys.sysdir / INPDB
     mdsys.prepare_files(pour_martini=True) # be careful it can overwrite later files
-    mdsys.clean_pdb_mm(inpdb, add_missing_atoms=True, add_hydrogens=True, pH=7.0) # Generates Amber ff names in PDB
-    # mdsys.clean_pdb_gmx(inpdb, clinput="8\n 7\n", ignh="no", renum="yes") # 8 for CHARMM, sometimes you need to refer to AMBER FF
+    # mdsys.clean_pdb_mm(inpdb, add_missing_atoms=True, add_hydrogens=True, pH=7.0) 
+    mdsys.clean_pdb_gmx(inpdb, clinput="8\n 7\n", ignh="no", renum="yes") 
     mdsys.split_chains()
-    mdsys.martinize_proteins_go(go_eps=12.0, go_low=0.3, go_up=1.1, from_ff='amber', p="none", append=False) # Martini + Go-network FF
+    mdsys.martinize_proteins_go(go_eps=12.0, go_low=0.3, go_up=1.1, from_ff='charmm', append=False) # Martini + Go-network FF
+    # mdsys.martinize_proteins_en(ef=400, el=0.3, eu=0.9, from_ff='charmm', p="none", append=False)  
     mdsys.make_cg_topology() # CG topology. Returns mdsys.systop ("mdsys.top") file
     mdsys.make_cg_structure() # CG structure. Returns mdsys.solupdb ("solute.pdb") file
     mdsys.make_box(d="1.0", bt="dodecahedron")
@@ -135,9 +137,8 @@ def setup_martini(sysdir, sysname):
     conf = app.GromacsGroFile(str(mdsys.sysgro))
     box_vectors = conf.getPeriodicBoxVectors()
     top = martini_openmm.MartiniTopFile(top_file, periodicBoxVectors=box_vectors, epsilon_r=15.0)
-    system = top.create_system(nonbonded_cutoff=1.1*nanometer)
+    system = top.create_system(nonbonded_cutoff=1.1*unit.nanometer)
     pdb = app.PDBFile(str(mdsys.syspdb))
-    _add_bb_restraints(system, pdb, bb_aname='BB')
     _save_system_to_xml(system, mdsys.sysxml)
 
 ###########################################################
@@ -189,7 +190,6 @@ def trjconv(sysdir, sysname, runname):
     # CONVERT
     out_top = mdrun.rundir / "topology.pdb"
     out_traj = mdrun.rundir / f"samples.{TRJEXT}"
-    logger.info(f'Converting trajectory with selection: {OUT_SELECTION}')
     convert_trajectories(top, trajs, out_top, out_traj, selection=OUT_SELECTION, step=1)
     logger.info("Done!")
 
@@ -256,10 +256,10 @@ def tdlrt_analysis(sysdir, sysname, runname):
     # ps = ps - ps[:, 0][..., None]
     # ps -= ps.mean(axis=1)[..., None]
     # CCF calculations
-    adict = {'pv': (ps, vs), 'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
+    adict = {'vv': (vs, vs), } #  adict = {'pv': (ps, vs)}
     for key, item in adict.items(): # DT = TSTEP * NOUT
         v1, v2 = item
-        corr = mdm.ccf(v1, v2, ntmax=4000, n=1, mode='gpu', center=False, dtype=np.float32, buffer_c=0.8) # falls back on cpu if no cuda
+        corr = mdm.ccf(v1, v2, ntmax=200, n=1, mode='gpu', center=False, dtype=np.float32, buffer_c=0.8) # falls back on cpu if no cuda
         corr_file = mdrun.lrtdir / f'ccfs_{key}.npy'
         np.save(corr_file, corr)    
         logger.info("Saved CCFs to %s", corr_file)
@@ -361,7 +361,7 @@ def _get_reporters(mdrun, append=False, prefix="md"):
 def _add_bb_restraints(system, pdb, bb_aname='CA'):
     restraint = mm.CustomExternalForce('bb_fc*periodicdistance(x, y, z, x0, y0, z0)^2')
     restraint.setName('BackboneRestraint')
-    restraint.addGlobalParameter('bb_fc', 1000.0*kilojoules_per_mole/nanometer)
+    restraint.addGlobalParameter('bb_fc', 1000.0*unit.kilojoules_per_mole/unit.nanometer)
     restraint.addPerParticleParameter('x0')
     restraint.addPerParticleParameter('y0')
     restraint.addPerParticleParameter('z0')
