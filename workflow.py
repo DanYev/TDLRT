@@ -38,10 +38,23 @@ SELECTION = "name BB"
 
 
 def workflow(sysdir, sysname, runname):
-    md_nve(sysdir, sysname, runname)
     trjconv(sysdir, sysname, runname)
     save_pos_vel_to_numpy(sysdir, sysname, runname, selection=SELECTION, dtype=np.float32)
     tdlrt_analysis(sysdir, sysname, runname)
+
+
+def restructure_folders(sysdir, sysname):
+    rootdir = Path(sysdir) / sysname
+    old_folders = [x.stem for x in sorted(rootdir.glob('sample_*'))]
+    for old_sysname in old_folders:
+        old_rundir = rootdir / old_sysname / "mdruns" / "mdrun"
+        new_rundir = rootdir / "mdruns" / old_sysname
+        new_rundir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Moving {old_rundir} to {new_rundir}")
+        for item in old_rundir.iterdir():
+            logger.info(f"Moving {item} from {old_rundir} to {new_rundir / item.name}")
+            shutil.move(str(item), str(new_rundir / item.name))
+        shutil.rmtree(rootdir / old_sysname)
 
 ###########################################################
 ### Setup EMU ###
@@ -314,11 +327,6 @@ def read_nikhils_files():
         np.save(pos_file, psr)
         np.save(vel_file, vsr)
         logger.info("Saved to %s and %s", pos_file, vel_file)
-
-
-def pca_data():
-    pass
-
 
 ##############################################################################################
 ### Private funcs ############################################################################

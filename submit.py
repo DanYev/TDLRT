@@ -38,7 +38,7 @@ def sys_job(function, submit=False, **kwargs):
 def run_job(function, submit=False, **kwargs):
     """Submit or run a job for each system and run."""
     for sysname in sysnames:
-        for runname in runs:
+        for runname in runnames:
             if submit:
                 # Create a job-specific script to freeze the code at submission time
                 job_script = create_job_script(pyscript, function, sysdir, sysname, runname)
@@ -48,13 +48,26 @@ def run_job(function, submit=False, **kwargs):
                       J=f'{function}', **kwargs)
 
 
+def one_job(function, submit=False, **kwargs):
+    """Submit or run a job for each system and run."""
+    if submit:
+        # Create a job-specific script to freeze the code at submission time
+        job_script = create_job_script(pyscript, function, sysdir)
+        dojob(submit, shscript, job_script, J=f'{function}', **kwargs)
+    else:
+        dojob(submit, shscript, pyscript, function, sysdir, J=f'{function}', **kwargs)
+
+
 if __name__ == "__main__":
     pdir = Path(__file__).parent
     shscript = str(pdir / 'run.sh')
 
     sysdir = 'systems' 
-    sysnames = ['1btl_nve/sample_000'] 
-    runs = ["mdrun"]
+    sysnames = ['1btl_nve']
+    mdrun_dir = Path(sysdir) / sysnames[0] / 'mdruns' 
+    runnames = [str(x.stem) for x in sorted(mdrun_dir.glob('sample_*'))]
+    
+    # runnames = ["mdrun"]
 
     submit = False
 
@@ -65,6 +78,7 @@ if __name__ == "__main__":
     # # run_job('md_npt', submit=submit, G='1', c='4', mem='2G', t='00-02:00:00')
     # # run_job('extend', submit=submit, G='1', c='4', mem='2G')
     # # run_job('trjconv', submit=submit)
+    # sys_job('restructure_folders', submit=submit) 
 
     # ##### Analysis #####
     pyscript = str(pdir / 'analysis.py')
@@ -74,6 +88,6 @@ if __name__ == "__main__":
     # run_job('cov_analysis', submit=submit) # DFI/DCI
     # sys_job('get_means_sems', submit=submit) 
     # run_job('tdlrt_analysis', submit=submit) # TDLRT
-    sys_job('pca_cpsd_allosteric', submit=submit) # TDLRT
-    # sys_job('get_averages', submit=submit, c='1', mem='4G') # Big arrays: mem > 2 * c * array size
+    # sys_job('get_averages', submit=submit, c='8', mem='16G') # Big arrays: mem > 2 * c * array size
+    sys_job('pca_cpsd_control_vs_active', submit=submit) # TDLRT
     # sys_job('enm_analysis', submit=submit, G='1', mem='8G') # ENM

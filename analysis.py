@@ -24,11 +24,11 @@ INPDB = 'input.pdb'
 SELECTION = "name CA" 
 TRJEXT = 'trr' # 'xtc' or 'trr'
 
-allo_1 = [44, 203, 232, 249, 262, 286]
+allo_1 = [44, 203, 249, 262, 286]
 allo_fta = [244]
 allosteric_sites = allo_1 + allo_fta
 active_1 = [70, 73, 130, 132, 166, 170, 234]
-active_2 = [73, 105, 166, 229, 234, 244, 275]
+active_2 = [73, 105, 166, 229, 234, 275]
 active_sites = sorted(list(set(active_1 + active_2)))
 control_sites = [55, 80, 99, 120, 150, 180, 200, 222, 256]
 all_sites = allosteric_sites + active_sites + control_sites
@@ -287,7 +287,7 @@ def tdlrt_analysis(sysdir, sysname, runname, selection=SELECTION):
         vs = io.read_velocities(u, ag) # (n_atoms*3, nframes)
     ps = ps - ps[:, 0][..., None]
     # CCF calculations
-    adict = {'pv': (ps, vs), } 
+    adict = {'vv': (vs, vs), } 
     for key, item in adict.items(): # DT = TSTEP * NOUT
         v1, v2 = item
         # corr = mdm.ccf(v1, v2, ntmax=400, n=1, domain='frequency', mode='gpu', center=False, dtype=np.float32, buffer_c=0.9) # falls back on cpu if no cuda
@@ -296,6 +296,71 @@ def tdlrt_analysis(sysdir, sysname, runname, selection=SELECTION):
         np.save(corr_file, corr)    
         logger.info("Saved CCFs to %s", corr_file)
 
+
+def get_averages(sysdir, sysname, pattern="cpsd_vv*.npy", dtype=None):
+    """Calculate average arrays across files matching pattern."""
+    mdsys = MDSystem(sysdir, sysname)
+    nprocs = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
+    logger.info("Number of available processors: %s", nprocs)
+    files = io.pull_files(mdsys.root / "mdruns", pattern)[::1]
+    if not files:
+        logger.info('Could not find files matching given pattern: %s. Maybe you forgot "*"?', pattern)
+        return
+    logger.info("Found %d files, starting processing: %s", len(files), files[0])
+    # Discover minimal common shape (fast, uses mmap to avoid loading full arrays)
+    shapes = []
+    for f in files:
+        try:
+            arr = np.load(f, mmap_mode='r')
+            if dtype is None:
+                dtype = arr.dtype
+            shapes.append(arr.shape)
+        except Exception as e:
+            logger.warning("Could not read shape for %s: %s", f, e)
+    if not shapes:
+        logger.info('No readable files found for pattern: %s', pattern)
+        return
+    min_shape = tuple(min(s[i] for s in shapes) for i in range(len(shapes[0])))
+    logger.info('Running parallel get_averages with %d processes', nprocs)
+    # split files into roughly equal batches
+    batches = [files[i::nprocs] for i in range(nprocs)]
+    work = [(batch, min_shape, dtype) for batch in batches if batch]
+    with mp.Pool(processes=len(work)) as pool:
+        results = pool.map(_process_batch, work)
+    total_sum = np.zeros(min_shape, dtype=dtype)
+    total_count = 0
+    for local_sum, local_count in results:
+        total_sum += local_sum
+        total_count += local_count
+    average = total_sum / total_count
+    outdir = mdsys.datdir
+    outdir.mkdir(exist_ok=True, parents=True)
+    out_file = outdir / f"{pattern.split('*')[0]}_av.npy"
+    np.save(out_file, average)
+    logger.info("Saved averages to %s", out_file)
+
+
+def _process_batch(args):
+    """Worker: load assigned files, crop to min_shape and return local sum and count."""
+    files, min_shape, dtype = args
+    s = tuple(slice(0, s) for s in min_shape)
+    local_sum = np.zeros(min_shape, dtype=dtype)
+    local_count = 0
+    for f in files:
+        logger.info("Processing %s", f)
+        try:
+            arr = np.load(f)
+        except Exception as e:
+            logger.warning("Could not load %s: %s", f, e)
+            continue
+        local_sum += arr[s]
+        local_count += 1
+        del arr
+    return local_sum, local_count
+
+################################################################################
+### PCA FOR TDLRT ###
+################################################################################
 
 def perform_pca_analysis(X, labels, n_components=3):
     """
@@ -333,24 +398,26 @@ def perform_pca_analysis(X, labels, n_components=3):
     return X_pca, pca
 
 
-def pca_cpsd_allosteric(sysdir, sysname, cpsd_file="cpsd_vv_av_ws100.npy"):
+def pca_cpsd_control_vs_active(sysdir, sysname, cpsd_file="cpsd_vv_av.npy", per_allo_index=False):
     """
     Perform PCA on CPSD signals along allosteric indices.
     Handles complex CPSD data by analyzing magnitude and phase separately.
-    - Axis 0: allosteric indices
-    - Axis 1: control vs active sites
+    - Axis 0: control vs active sites
+    - Axis 1: allosteric indices
+    
+    Args:
+        per_allo_index: If True, perform separate PCA for each allosteric index.
+                       If False, average over all allosteric indices first.
     """
     mdsys = MDSystem(sysdir, sysname)
     pdb_id = '1btl'
-    mdsys.datdir = Path("data") / "1btl_nve"
-    mdsys.pngdir = Path("png") / "1btl_nve"
     
     # Get indices for different site types in the full system
     allo_ids = resid_to_index(f'systems/{pdb_id}.pdb', allosteric_sites)
     active_ids = resid_to_index(f'systems/{pdb_id}.pdb', active_sites)
     control_ids = resid_to_index(f'systems/{pdb_id}.pdb', control_sites)
     
-    # Get indices for all sites (as used in tdlrt_analysis)
+    # Get indices for all sites
     all_ids = resid_to_index(f'systems/{pdb_id}.pdb', all_sites)
     
     # Map site indices to their positions in the all_sites subset
@@ -365,15 +432,8 @@ def pca_cpsd_allosteric(sysdir, sysname, cpsd_file="cpsd_vv_av_ws100.npy"):
         return
     
     logger.info(f"Loading CPSD data from {cpsd_path}")
-    cpsd = np.load(cpsd_path)  # Shape: (n_sites*3, n_sites*3, n_freq) or (n_sites*3, n_sites*3)
+    cpsd = np.load(cpsd_path)  # Shape: (n_sites*3, n_sites*3, n_freq) 
     logger.info(f"CPSD shape: {cpsd.shape}, dtype: {cpsd.dtype}")
-    
-    # Handle 2D or 3D arrays
-    if cpsd.ndim == 3:
-        # Average over frequency dimension
-        cpsd_avg = np.mean(cpsd, axis=2)
-    else:
-        cpsd_avg = cpsd
     
     # Convert CA subset indices to 3N indices (x, y, z components)
     allo_3n_ids = ca_to_3n_indices(allo_subset_ids)
@@ -383,71 +443,84 @@ def pca_cpsd_allosteric(sysdir, sysname, cpsd_file="cpsd_vv_av_ws100.npy"):
     logger.info(f"Allosteric 3N indices: {len(allo_3n_ids)}, Active 3N indices: {len(active_3n_ids)}, Control 3N indices: {len(control_3n_ids)}")
     
     # Extract CPSD submatrices: allosteric rows, active/control columns
-    cpsd_allo_active = cpsd_avg[allo_3n_ids][:, active_3n_ids]  # (n_allo*3, n_active*3)
-    cpsd_allo_control = cpsd_avg[allo_3n_ids][:, control_3n_ids]  # (n_allo*3, n_control*3)
-    
+    # cpsd shape: (n_sites*3, n_sites*3, n_freq)
+    cpsd_allo_active = cpsd[np.ix_(active_3n_ids, allo_3n_ids)]  # (n_active*3, n_allo*3, n_freq)
+    cpsd_allo_active = np.swapaxes(cpsd_allo_active, 0, 1)  # (n_allo*3, n_active*3, n_freq)
+    cpsd_allo_control = cpsd[np.ix_(control_3n_ids, allo_3n_ids)]  # (n_control*3, n_allo*3, n_freq)
+    cpsd_allo_control = np.swapaxes(cpsd_allo_control, 0, 1)  # (n_allo*3, n_control*3, n_freq)
+
     # Create labels
     labels = np.array(['control'] * len(control_3n_ids) + ['active'] * len(active_3n_ids))
     
     # Check if data is complex
-    is_complex = np.iscomplexobj(cpsd_avg)
+    is_complex = np.iscomplexobj(cpsd)
     
-    if is_complex:
-        logger.info("CPSD data is complex - analyzing magnitude and phase separately")
-        
-        # Magnitude analysis
-        X_active_mag = np.abs(cpsd_allo_active).T
-        X_control_mag = np.abs(cpsd_allo_control).T
-        X_mag = np.vstack([X_control_mag, X_active_mag])
-        
-        X_pca_mag, pca_mag = perform_pca_analysis(X_mag, labels, n_components=3)
-        
-        # Save magnitude PCA results
-        np.save(mdsys.datdir / "cpsd_pca_magnitude_components.npy", X_pca_mag)
-        np.save(mdsys.datdir / "cpsd_pca_magnitude_variance.npy", pca_mag.explained_variance_ratio_)
-        
-        # Plot magnitude PCA
-        plots.plot_pca_2d(X_pca_mag, labels, pca_mag.explained_variance_ratio_, mdsys,
-                         title_prefix="PCA of CPSD Magnitude", 
-                         filename_prefix="cpsd_pca_magnitude")
-        
-        # Phase analysis
-        X_active_phase = np.angle(cpsd_allo_active).T
-        X_control_phase = np.angle(cpsd_allo_control).T
-        X_phase = np.vstack([X_control_phase, X_active_phase])
-        
-        X_pca_phase, pca_phase = perform_pca_analysis(X_phase, labels, n_components=3)
-        
-        # Save phase PCA results
-        np.save(mdsys.datdir / "cpsd_pca_phase_components.npy", X_pca_phase)
-        np.save(mdsys.datdir / "cpsd_pca_phase_variance.npy", pca_phase.explained_variance_ratio_)
-        
-        # Plot phase PCA
-        plots.plot_pca_2d(X_pca_phase, labels, pca_phase.explained_variance_ratio_, mdsys,
-                         title_prefix="PCA of CPSD Phase", 
-                         filename_prefix="cpsd_pca_phase")
-        
+    # Optionally average over allosteric indices
+    if not per_allo_index:
+        logger.info("Averaging over all allosteric indices")
+        cpsd_allo_active = np.mean(cpsd_allo_active, axis=0, keepdims=True)  # (1, n_active*3, n_freq)
+        cpsd_allo_control = np.mean(cpsd_allo_control, axis=0, keepdims=True)  # (1, n_control*3, n_freq)
+        indices_to_loop = [0]  # Single averaged index
+        allo_labels = ["avg"]
     else:
-        logger.info("CPSD data is real - performing single PCA")
+        indices_to_loop = range(len(allo_3n_ids))
+        allo_labels = [(allo_subset_ids[i // 3], ['x', 'y', 'z'][i % 3]) for i in indices_to_loop]
+    
+    logger.info(f"{'Complex' if is_complex else 'Real'} CPSD data - analyzing {'per allosteric index' if per_allo_index else 'averaged over allosteric indices'}")
+    logger.info(f"Performing PCA for {len(indices_to_loop)} allosteric index/indices")
+    
+    # Loop over allosteric indices (or just one averaged index)
+    for i in indices_to_loop:
+        if per_allo_index:
+            allo_idx, coord = allo_labels[i]
+            title_suffix = f"Allo {allo_idx}{coord}"
+            file_suffix = f"allo{allo_idx}{coord}"
+        else:
+            title_suffix = "Avg over Allosteric"
+            file_suffix = "avg"
         
-        # Real data analysis
-        X_active = cpsd_allo_active.T
-        X_control = cpsd_allo_control.T
-        X = np.vstack([X_control, X_active])
-        
-        X_pca, pca = perform_pca_analysis(X, labels, n_components=3)
-        
-        # Save PCA results
-        np.save(mdsys.datdir / "cpsd_pca_components.npy", X_pca)
-        np.save(mdsys.datdir / "cpsd_pca_variance.npy", pca.explained_variance_ratio_)
-        
-        # Plot PCA
-        plots.plot_pca_2d(X_pca, labels, pca.explained_variance_ratio_, mdsys,
-                         title_prefix="PCA of CPSD", 
-                         filename_prefix="cpsd_pca")
+        if is_complex:
+            # Magnitude analysis
+            X_control_mag_freq = np.abs(cpsd_allo_control[i, :, :]).T  # (n_freq, n_control*3)
+            X_active_mag_freq = np.abs(cpsd_allo_active[i, :, :]).T    # (n_freq, n_active*3)
+            X_mag_freq = np.hstack([X_control_mag_freq, X_active_mag_freq])  # (n_freq, n_control*3 + n_active*3)
+            
+            n_components = 2 if per_allo_index else 3
+            if X_mag_freq.shape[1] > n_components:
+                X_pca_mag, pca_mag = perform_pca_analysis(X_mag_freq.T, labels, n_components=n_components)
+                plots.plot_pca_2d(X_pca_mag, labels, pca_mag.explained_variance_ratio_, mdsys,
+                                 title_prefix=f"PCA CPSD Magnitude - {title_suffix}", 
+                                 filename_prefix=f"{cpsd_path.stem}_magnitude_{file_suffix}")
+            
+            # Phase analysis
+            X_control_phase_freq = np.angle(cpsd_allo_control[i, :, :]).T  # (n_freq, n_control*3)
+            X_active_phase_freq = np.angle(cpsd_allo_active[i, :, :]).T    # (n_freq, n_active*3)
+            X_phase_freq = np.hstack([X_control_phase_freq, X_active_phase_freq])  # (n_freq, n_control*3 + n_active*3)
+            
+            if X_phase_freq.shape[1] > n_components:
+                X_pca_phase, pca_phase = perform_pca_analysis(X_phase_freq.T, labels, n_components=n_components)
+                plots.plot_pca_2d(X_pca_phase, labels, pca_phase.explained_variance_ratio_, mdsys,
+                                 title_prefix=f"PCA CPSD Phase - {title_suffix}", 
+                                 filename_prefix=f"{cpsd_path.stem}_phase_{file_suffix}")
+
+        else:
+            # Real data analysis
+            X_control_freq = cpsd_allo_control[i, :, :].T  # (n_freq, n_control*3)
+            X_active_freq = cpsd_allo_active[i, :, :].T    # (n_freq, n_active*3)
+            X_freq = np.hstack([X_control_freq, X_active_freq])  # (n_freq, n_control*3 + n_active*3)
+            
+            n_components = 2 if per_allo_index else 3
+            if X_freq.shape[1] > n_components:
+                X_pca, pca = perform_pca_analysis(X_freq.T, labels, n_components=n_components)
+                plots.plot_pca_2d(X_pca, labels, pca.explained_variance_ratio_, mdsys,
+                                 title_prefix=f"PCA CPSD - {title_suffix}", 
+                                 filename_prefix=f"{cpsd_path.stem}_{file_suffix}")
     
     logger.info("PCA analysis complete")
 
+################################################################################
+### Running Window Average ###
+################################################################################
 
 def running_window_average(data, window_size=100):
     """
@@ -536,68 +609,6 @@ def apply_running_average_to_files(datdir="data", pattern="*.npy", window_size=1
         logger.info(f"Saved smoothed data to {out_path}")
     
     logger.info("Running average complete")
-
-
-def get_averages(sysdir, sysname, pattern="ccfs_pp*.npy", dtype=None):
-    """Calculate average arrays across files matching pattern."""
-    mdsys = MDSystem(sysdir, sysname)
-    nprocs = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
-    logger.info("Number of available processors: %s", nprocs)
-    files = io.pull_files(sysdir, pattern)[::1]
-    if not files:
-        logger.info('Could not find files matching given pattern: %s. Maybe you forgot "*"?', pattern)
-        return
-    logger.info("Found %d files, starting processing: %s", len(files), files[0])
-    # Discover minimal common shape (fast, uses mmap to avoid loading full arrays)
-    shapes = []
-    for f in files:
-        try:
-            arr = np.load(f, mmap_mode='r')
-            if dtype is None:
-                dtype = arr.dtype
-            shapes.append(arr.shape)
-        except Exception as e:
-            logger.warning("Could not read shape for %s: %s", f, e)
-    if not shapes:
-        logger.info('No readable files found for pattern: %s', pattern)
-        return
-    min_shape = tuple(min(s[i] for s in shapes) for i in range(len(shapes[0])))
-    logger.info('Running parallel get_averages with %d processes', nprocs)
-    # split files into roughly equal batches
-    batches = [files[i::nprocs] for i in range(nprocs)]
-    work = [(batch, min_shape) for batch in batches if batch]
-    with mp.Pool(processes=len(work)) as pool:
-        results = pool.map(_process_batch, work)
-    total_sum = np.zeros(min_shape, dtype=dtype)
-    total_count = 0
-    for local_sum, local_count in results:
-        total_sum += local_sum
-        total_count += local_count
-    average = total_sum / total_count
-    outdir = mdsys.datdir
-    outdir.mkdir(exist_ok=True, parents=True)
-    out_file = outdir / f"{pattern.split('*')[0]}_av.npy"
-    np.save(out_file, average)
-    logger.info("Saved averages to %s", out_file)
-
-
-def _process_batch(args, dtype=np.float32):
-    """Worker: load assigned files, crop to min_shape and return local sum and count."""
-    files, min_shape = args
-    s = tuple(slice(0, s) for s in min_shape)
-    local_sum = np.zeros(min_shape, dtype=dtype)
-    local_count = 0
-    for f in files:
-        logger.info("Processing %s", f)
-        try:
-            arr = np.load(f)
-        except Exception as e:
-            logger.warning("Could not load %s: %s", f, e)
-            continue
-        local_sum += arr[s]
-        local_count += 1
-        del arr
-    return local_sum, local_count
 
 ################################################################################
 ### ENM analysis ###
